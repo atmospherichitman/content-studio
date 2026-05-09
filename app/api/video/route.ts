@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 const HEYGEN_API_KEY = process.env.HEYGEN_API_KEY;
 const AVATAR_ID = "6cdb02b951fe481cbf448a82bc714c18";
 const VOICE_ID = "69f83cf18dba4061ab7dd5dd4a32d865";

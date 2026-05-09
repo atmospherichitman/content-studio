@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+export const dynamic = "force-dynamic";
 
 const BRAND_BLUEPRINT = `
 WHO I AM: Antwon Randolph — Tesla Autopilot Engineer, entrepreneur, husband, father. Building a future where I don't have to grind as hard, using AI.
@@ -18,6 +18,7 @@ DIFFERENTIATOR: I break AI down in a way that feels human. My goal isn't to impr
 `;
 
 export async function POST(req: Request) {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const { topic } = await req.json();
 
   const completion = await openai.chat.completions.create({
