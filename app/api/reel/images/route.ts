@@ -60,8 +60,8 @@ export async function POST(req: NextRequest) {
 
     const images: string[] = [];
     for (const result of imageResults) {
-      if (result.status === "fulfilled" && result.value.data[0]?.url) {
-        images.push(result.value.data[0].url);
+      if (result.status === "fulfilled" && result.value.data?.[0]?.url) {
+        images.push(result.value.data[0].url as string);
       } else {
         // Use a placeholder if one fails
         images.push("https://placehold.co/1024x1024/1a1a2e/ffffff?text=Scene");
