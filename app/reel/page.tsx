@@ -147,7 +147,7 @@ function ReelInner() {
           imageUrls,
           audioBase64,
           heygenVideoUrl,
-          duration: 60, // estimate; Creatomate will determine final length
+          duration: 30,
         }),
       });
       const assembleData = await assembleRes.json();
@@ -174,7 +174,8 @@ function ReelInner() {
               resolve();
             } else if (data.status === "failed") {
               clearInterval(interval);
-              setStep("assemble", { status: "error", detail: "Creatomate render failed" });
+              const reason = data.errorMessage || "Render failed";
+              setStep("assemble", { status: "error", detail: `Creatomate: ${reason}` });
               resolve();
             }
             // planned/rendering - keep polling

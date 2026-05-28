@@ -13,9 +13,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "imageUrls, audioBase64, heygenVideoUrl, and duration are required" }, { status: 400 });
     }
 
-    const perImageDuration = duration / imageUrls.length;
+    // 3 seconds per image, 10 images = 30 seconds total
+    const perImageDuration = 3;
+    const totalDuration = imageUrls.length * perImageDuration;
 
-    // Build image slideshow elements for the top half
+    // Build image slideshow for the top half (y:25% = center of top 50%)
     const imageElements = imageUrls.map((url: string, i: number) => ({
       type: "image",
       track: 1,
@@ -27,32 +29,24 @@ export async function POST(req: NextRequest) {
       height: "50%",
       source: url,
       fit: "cover",
-      animations: [
-        {
-          time: "start",
-          duration: perImageDuration,
-          easing: "linear",
-          type: "scale",
-          "start-scale": i % 2 === 0 ? "100%" : "115%",
-          "end-scale": i % 2 === 0 ? "115%" : "100%",
-        },
-      ],
     }));
 
-    // Bottom half: HeyGen avatar video
+    // Bottom half: HeyGen avatar video (y:75% = center of bottom 50%), mute its audio
     const avatarElement = {
       type: "video",
       track: 2,
       time: 0,
+      duration: totalDuration,
       x: "50%",
       y: "75%",
       width: "100%",
       height: "50%",
       source: heygenVideoUrl,
       fit: "cover",
+      volume: "0%",
     };
 
-    // Audio: ElevenLabs voiceover as data URL
+    // Audio: ElevenLabs voiceover as base64 data URL
     const audioElement = {
       type: "audio",
       track: 3,
@@ -64,6 +58,7 @@ export async function POST(req: NextRequest) {
       output_format: "mp4",
       width: 1080,
       height: 1920,
+      duration: totalDuration,
       elements: [...imageElements, avatarElement, audioElement],
     };
 
@@ -124,8 +119,9 @@ export async function GET(req: NextRequest) {
 
     const status = data.status || "planned";
     const url = data.url;
+    const errorMessage = data.error_message || data.error || null;
 
-    return NextResponse.json({ status, url });
+    return NextResponse.json({ status, url, errorMessage });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
