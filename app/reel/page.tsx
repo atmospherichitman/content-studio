@@ -40,6 +40,7 @@ function ReelInner() {
 
     let imageUrls: string[] = [];
     let audioBase64 = "";
+    let audioUrl: string | null = null;
     let heygenVideoUrl = "";
 
     // Images + audio in parallel
@@ -85,8 +86,9 @@ function ReelInner() {
     // Audio
     const audioResult = results[1];
     if (audioResult.status === "fulfilled" && (audioResult.value as { audioBase64?: string }).audioBase64) {
-      audioBase64 = (audioResult.value as { audioBase64: string }).audioBase64;
-      setStep("audio", { status: "done", detail: "Audio ready" });
+      audioBase64 = (audioResult.value as { audioBase64: string; audioUrl?: string }).audioBase64;
+      audioUrl = (audioResult.value as { audioUrl?: string }).audioUrl || null;
+      setStep("audio", { status: "done", detail: audioUrl ? "Audio ready (hosted)" : "Audio ready" });
     } else {
       const err = audioResult.status === "rejected" ? audioResult.reason?.message : (audioResult.value as { error?: string }).error;
       setStep("audio", { status: "error", detail: err || "Failed to generate audio" });
@@ -144,6 +146,7 @@ function ReelInner() {
         body: JSON.stringify({
           imageUrls,
           audioBase64,
+          audioUrl,
           heygenVideoUrl: facelessMode ? "" : heygenVideoUrl,
           duration: 30,
         }),

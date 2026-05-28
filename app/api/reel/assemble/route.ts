@@ -45,17 +45,17 @@ async function submitRender(template: object): Promise<{ renderId?: string; erro
 
 export async function POST(req: NextRequest) {
   try {
-    const { imageUrls, audioBase64, heygenVideoUrl, duration } = await req.json();
+    const { imageUrls, audioBase64, audioUrl, heygenVideoUrl, duration } = await req.json();
 
-    if (!imageUrls || !audioBase64) {
-      return NextResponse.json({ error: "imageUrls and audioBase64 are required" }, { status: 400 });
+    if (!imageUrls || (!audioBase64 && !audioUrl)) {
+      return NextResponse.json({ error: "imageUrls and audio are required" }, { status: 400 });
     }
 
     const perImageDuration = 3;
     const totalDuration = (duration && duration > 0) ? duration : imageUrls.length * perImageDuration;
 
-    // Try to get a hosted audio URL (more reliable than data URI)
-    const hostedAudioUrl = await uploadAudioToCreatomate(audioBase64);
+    // Prefer a real public URL over data URI (Creatomate handles URLs more reliably)
+    const hostedAudioUrl = audioUrl || await uploadAudioToCreatomate(audioBase64 || "");
     const audioSource = hostedAudioUrl || `data:audio/mpeg;base64,${audioBase64}`;
 
     // Build image slideshow for top half

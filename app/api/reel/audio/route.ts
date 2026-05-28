@@ -1,8 +1,9 @@
 export const maxDuration = 30;
 
 import { NextRequest, NextResponse } from "next/server";
+import { put } from "@vercel/blob";
 
-const EL_KEY = process.env.ELEVENLABS_API_KEY!;
+const EL_KEY = proces…EY!;
 const EL_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "TX3LPaxmHKxFdv7VOQHJ";
 const MODELS = [
   "eleven_turbo_v2_5",
@@ -16,17 +17,16 @@ export async function POST(req: NextRequest) {
     const { script } = await req.json();
     if (!script) return NextResponse.json({ error: "script is required" }, { status: 400 });
 
+    let audioBuffer: ArrayBuffer | null = null;
     let lastError = "";
+
     for (const model of MODELS) {
       try {
         const res = await fetch(
           `https://api.elevenlabs.io/v1/text-to-speech/${EL_VOICE_ID}`,
           {
             method: "POST",
-            headers: {
-              "xi-api-key": EL_KEY,
-              "Content-Type": "application/json",
-            },
+            headers: { "xi-api-key": EL_KEY, "Content-Type": "application/json" },
             body: JSON.stringify({
               text: script,
               model_id: model,
@@ -34,23 +34,45 @@ export async function POST(req: NextRequest) {
             }),
           }
         );
-
         if (!res.ok) {
-          const errText = await res.text();
-          lastError = `${model}: ${errText}`;
+          lastError = `${model}: ${await res.text()}`;
           continue;
         }
-
-        const arrayBuffer = await res.arrayBuffer();
-        const base64 = Buffer.from(arrayBuffer).toString("base64");
-        return NextResponse.json({ audioBase64: base64, mimeType: "audio/mpeg", model });
+        audioBuffer = await res.arrayBuffer();
+        break;
       } catch (e) {
         lastError = `${model}: ${e instanceof Error ? e.message : "unknown"}`;
         continue;
       }
     }
 
-    return NextResponse.json({ error: `All ElevenLabs models failed. Last: ${lastError}` }, { status: 500 });
+    if (!audioBuffer) {
+      return NextResponse.json({ error: `All ElevenLabs models failed. Last: ${lastError}` }, { status: 500 });
+    }
+
+    const base64 = Buffer.from(audioBuffer).toString("base64");
+
+    // Try to upload to Vercel Blob for a public URL (Creatomate prefers real URLs)
+    let audioUrl: string | null = null;
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      try {
+        const filename = `reel-audio-${Date.now()}.mp3`;
+        const blob = await put(filename, Buffer.from(audioBuffer), {
+          access: "public",
+          contentType: "audio/mpeg",
+        });
+        audioUrl = blob.url;
+      } catch {
+        // Blob upload failed - fall back to base64
+        audioUrl = null;
+      }
+    }
+
+    return NextResponse.json({
+      audioBase64: base64,
+      audioUrl,  // public URL if Blob is configured, null otherwise
+      mimeType: "audio/mpeg",
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
