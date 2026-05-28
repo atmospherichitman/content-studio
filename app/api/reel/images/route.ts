@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
         {
           role: "system",
           content:
-            "You are a creative director specializing in comic-book and retro-futuristic visual storytelling. Given a script, generate exactly 10 vivid image prompts that visually illustrate the key moments. Each prompt should specify: bold comic-book outlines, vivid colors, retro-futuristic style, dynamic composition. Return ONLY a JSON array of 10 strings, no extra text.",
+            'You are a creative director specializing in comic-book and retro-futuristic visual storytelling. Given a script, generate exactly 10 vivid image prompts that visually illustrate the key moments. Each prompt should specify: bold comic-book outlines, vivid colors, retro-futuristic style, dynamic composition. Return ONLY a JSON object with this exact shape: {"prompts": ["prompt1", "prompt2", ..., "prompt10"]}',
         },
         {
           role: "user",
@@ -33,13 +33,21 @@ export async function POST(req: NextRequest) {
     let prompts: string[] = [];
     try {
       const parsed = JSON.parse(content);
-      prompts = parsed.prompts || parsed.images || parsed.image_prompts || Object.values(parsed)[0] as string[];
+      // Try known keys first, then fall back to any array value in the object
+      const candidate = parsed.prompts || parsed.images || parsed.image_prompts || parsed.scenes || parsed.list;
+      if (Array.isArray(candidate)) {
+        prompts = candidate.map(String);
+      } else {
+        // Last resort: find first array value
+        const firstArray = Object.values(parsed).find(v => Array.isArray(v));
+        if (firstArray) prompts = (firstArray as unknown[]).map(String);
+      }
     } catch {
       return NextResponse.json({ error: "Failed to parse image prompts" }, { status: 500 });
     }
 
     if (!Array.isArray(prompts) || prompts.length === 0) {
-      return NextResponse.json({ error: "No prompts generated" }, { status: 500 });
+      return NextResponse.json({ error: "No prompts generated", debug: "GPT returned no parseable array" }, { status: 500 });
     }
 
     // Limit to 10
