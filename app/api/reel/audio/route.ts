@@ -52,25 +52,20 @@ export async function POST(req: NextRequest) {
 
     const base64 = Buffer.from(audioBuffer).toString("base64");
 
-    // Try to upload to Vercel Blob for a public URL (Creatomate prefers real URLs)
-    let audioUrl: string | null = null;
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      try {
-        const filename = `reel-audio-${Date.now()}.mp3`;
-        const blob = await put(filename, Buffer.from(audioBuffer), {
-          access: "public",
-          contentType: "audio/mpeg",
-        });
-        audioUrl = blob.url;
-      } catch {
-        // Blob upload failed - fall back to base64
-        audioUrl = null;
-      }
+    // Upload to Vercel Blob - Creatomate REQUIRES a real public URL, data URIs don't work
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return NextResponse.json({ error: "BLOB_READ_WRITE_TOKEN not set - Vercel Blob not connected to this project" }, { status: 500 });
     }
+
+    const filename = `reel-audio-${Date.now()}.mp3`;
+    const blob = await put(filename, Buffer.from(audioBuffer), {
+      access: "public",
+      contentType: "audio/mpeg",
+    });
 
     return NextResponse.json({
       audioBase64: base64,
-      audioUrl,  // public URL if Blob is configured, null otherwise
+      audioUrl: blob.url,
       mimeType: "audio/mpeg",
     });
   } catch (err: unknown) {
