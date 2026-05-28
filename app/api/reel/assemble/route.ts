@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
         Authorization: `Bearer ${CREATOMATE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(template),
+      body: JSON.stringify({ source: template }),
     });
 
     const data = await response.json();
