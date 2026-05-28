@@ -5,24 +5,27 @@ import { NextRequest, NextResponse } from "next/server";
 const CREATOMATE_API_KEY = process.env.CREATOMATE_API_KEY!;
 const CREATOMATE_BASE = "https://api.creatomate.com/v1";
 
-async function uploadAudioToCreatomate(audioBase64: string): Promise<string | null> {
-  try {
-    const binary = Buffer.from(audioBase64, "base64");
-    const res = await fetch(`${CREATOMATE_BASE}/assets`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${CREATOMATE_API_KEY}`,
-        "Content-Type": "audio/mpeg",
-        "Content-Length": binary.length.toString(),
-      },
-      body: binary,
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.url || null;
-  } catch {
-    return null;
+async function uploadAudioToCreatomate(audioBase64: string): Promise<string> {
+  const binary = Buffer.from(audioBase64, "base64");
+  const formData = new FormData();
+  formData.append(
+    "file",
+    new Blob([binary], { type: "audio/mpeg" }),
+    `audio-${Date.now()}.mp3`
+  );
+  const res = await fetch(`${CREATOMATE_BASE}/uploads`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${CREATOMATE_API_KEY}` },
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Creatomate upload failed: ${err}`);
   }
+  const data = await res.json();
+  const url = data.url || (Array.isArray(data) ? data[0]?.url : null);
+  if (!url) throw new Error(`No URL in Creatomate upload response: ${JSON.stringify(data)}`);
+  return url;
 }
 
 async function submitRender(template: object): Promise<{ renderId?: string; error?: string }> {
@@ -54,9 +57,15 @@ export async function POST(req: NextRequest) {
     const perImageDuration = 3;
     const totalDuration = (duration && duration > 0) ? duration : imageUrls.length * perImageDuration;
 
-    // Prefer a real public URL over data URI (Creatomate handles URLs more reliably)
-    const hostedAudioUrl = audioUrl || await uploadAudioToCreatomate(audioBase64 || "");
-    const audioSource = hostedAudioUrl || `data:audio/mpeg;base64,${audioBase64}`;
+    // Upload audio to Creatomate CDN - it cannot handle data URIs
+    let audioSource: string;
+    if (audioUrl) {
+      audioSource = audioUrl; // Vercel Blob URL if available
+    } else if (audioBase64) {
+      audioSource = await uploadAudioToCreatomate(audioBase64); // Upload to Creatomate CDN
+    } else {
+      return NextResponse.json({ error: "No audio provided" }, { status: 400 });
+    }
 
     // Build image slideshow for top half
     const imageElements = imageUrls.map((url: string, i: number) => ({
