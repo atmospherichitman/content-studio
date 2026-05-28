@@ -19,6 +19,7 @@ const nav = [
   { href: "/repurpose", label: "♻️ Repurpose" },
   { href: "/video", label: "🎬 Video" },
   { href: "/reel", label: "⚡ Reel" },
+  { href: "/content-engine", label: "🧠 Engine" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

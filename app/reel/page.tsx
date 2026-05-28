@@ -1,8 +1,8 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
-type StepStatus = "idle" | "loading" | "done" | "error";
+type StepStatus = "idle" | "loading" | "done" | "error" | "skipped";
 
 interface Step {
   id: string;
@@ -15,44 +15,39 @@ interface Step {
 function ReelInner() {
   const searchParams = useSearchParams();
   const [script, setScript] = useState(searchParams.get("script") || "");
+  const [facelessMode, setFacelessMode] = useState(false);
   const [building, setBuilding] = useState(false);
   const [finalUrl, setFinalUrl] = useState("");
 
-  const [steps, setSteps] = useState<Step[]>([
+  const initSteps = (faceless: boolean): Step[] => [
     { id: "images", emoji: "🖼️", label: "Generating Images", status: "idle" },
     { id: "audio", emoji: "🎙️", label: "Generating Audio", status: "idle" },
-    { id: "avatar", emoji: "🎬", label: "Generating Avatar Video", status: "idle" },
+    { id: "avatar", emoji: "🎬", label: "Generating Avatar Video", status: faceless ? "skipped" : "idle" },
     { id: "assemble", emoji: "🎞️", label: "Assembling Reel", status: "idle" },
-  ]);
+  ];
+
+  const [steps, setSteps] = useState<Step[]>(initSteps(false));
 
   function setStep(id: string, update: Partial<Step>) {
-    setSteps((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...update } : s))
-    );
+    setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, ...update } : s)));
   }
 
   async function buildReel() {
     if (!script.trim()) return;
     setBuilding(true);
     setFinalUrl("");
-    setSteps([
-      { id: "images", emoji: "🖼️", label: "Generating Images", status: "idle" },
-      { id: "audio", emoji: "🎙️", label: "Generating Audio", status: "idle" },
-      { id: "avatar", emoji: "🎬", label: "Generating Avatar Video", status: "idle" },
-      { id: "assemble", emoji: "🎞️", label: "Assembling Reel", status: "idle" },
-    ]);
-
-    // Start images, audio, and avatar all in parallel
-    setStep("images", { status: "loading" });
-    setStep("audio", { status: "loading" });
-    setStep("avatar", { status: "loading" });
+    setSteps(initSteps(facelessMode));
 
     let imageUrls: string[] = [];
     let audioBase64 = "";
     let heygenVideoUrl = "";
 
-    // Run images + audio in parallel
-    const [imagesResult, audioResult] = await Promise.allSettled([
+    // Images + audio in parallel
+    setStep("images", { status: "loading" });
+    setStep("audio", { status: "loading" });
+    if (!facelessMode) setStep("avatar", { status: "loading" });
+
+    const parallelJobs: Promise<unknown>[] = [
       fetch("/api/reel/images", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -63,80 +58,83 @@ function ReelInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ script }),
       }).then((r) => r.json()),
-    ]);
+    ];
 
-    if (imagesResult.status === "fulfilled" && imagesResult.value.images) {
-      imageUrls = imagesResult.value.images;
+    if (!facelessMode) {
+      parallelJobs.push(
+        fetch("/api/reel/heygen", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ script }),
+        }).then((r) => r.json())
+      );
+    }
+
+    const results = await Promise.allSettled(parallelJobs);
+
+    // Images
+    const imgResult = results[0];
+    if (imgResult.status === "fulfilled" && (imgResult.value as { images?: string[] }).images) {
+      imageUrls = (imgResult.value as { images: string[] }).images;
       setStep("images", { status: "done", detail: `${imageUrls.length} images ready` });
     } else {
-      const err = imagesResult.status === "rejected"
-        ? imagesResult.reason?.message
-        : imagesResult.value?.error;
+      const err = imgResult.status === "rejected" ? imgResult.reason?.message : (imgResult.value as { error?: string }).error;
       setStep("images", { status: "error", detail: err || "Failed to generate images" });
     }
 
-    if (audioResult.status === "fulfilled" && audioResult.value.audioBase64) {
-      audioBase64 = audioResult.value.audioBase64;
+    // Audio
+    const audioResult = results[1];
+    if (audioResult.status === "fulfilled" && (audioResult.value as { audioBase64?: string }).audioBase64) {
+      audioBase64 = (audioResult.value as { audioBase64: string }).audioBase64;
       setStep("audio", { status: "done", detail: "Audio ready" });
     } else {
-      const err = audioResult.status === "rejected"
-        ? audioResult.reason?.message
-        : audioResult.value?.error;
+      const err = audioResult.status === "rejected" ? audioResult.reason?.message : (audioResult.value as { error?: string }).error;
       setStep("audio", { status: "error", detail: err || "Failed to generate audio" });
     }
 
-    // Start HeyGen avatar generation (POST)
-    let videoId = "";
-    try {
-      const heygenPost = await fetch("/api/reel/heygen", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ script }),
-      });
-      const heygenData = await heygenPost.json();
-      if (heygenData.videoId) {
-        videoId = heygenData.videoId;
+    // HeyGen (if not faceless)
+    if (!facelessMode && results[2]) {
+      const heygenResult = results[2];
+      if (heygenResult.status === "fulfilled" && (heygenResult.value as { videoId?: string }).videoId) {
+        const videoId = (heygenResult.value as { videoId: string }).videoId;
         setStep("avatar", { status: "loading", detail: "Rendering... (3-10 min)" });
+
+        heygenVideoUrl = await new Promise((resolve) => {
+          const interval = setInterval(async () => {
+            try {
+              const res = await fetch(`/api/reel/heygen?id=${videoId}`);
+              const data = await res.json() as { status?: string; videoUrl?: string };
+              if (data.status === "completed" && data.videoUrl) {
+                clearInterval(interval);
+                setStep("avatar", { status: "done", detail: "Avatar video ready" });
+                resolve(data.videoUrl);
+              } else if (data.status === "failed") {
+                clearInterval(interval);
+                setStep("avatar", { status: "error", detail: "Avatar rendering failed" });
+                resolve("");
+              }
+            } catch { /* keep polling */ }
+          }, 10000);
+        });
       } else {
-        setStep("avatar", { status: "error", detail: heygenData.error || "Failed to start avatar video" });
+        const err = heygenResult.status === "rejected" ? heygenResult.reason?.message : (heygenResult.value as { error?: string }).error;
+        setStep("avatar", { status: "error", detail: err || "Failed to start avatar" });
       }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      setStep("avatar", { status: "error", detail: msg });
     }
 
-    // Poll HeyGen until done
-    if (videoId) {
-      heygenVideoUrl = await new Promise((resolve) => {
-        const interval = setInterval(async () => {
-          try {
-            const res = await fetch(`/api/reel/heygen?id=${videoId}`);
-            const data = await res.json();
-            if (data.status === "completed" && data.videoUrl) {
-              clearInterval(interval);
-              setStep("avatar", { status: "done", detail: "Avatar video ready" });
-              resolve(data.videoUrl);
-            } else if (data.status === "failed") {
-              clearInterval(interval);
-              setStep("avatar", { status: "error", detail: "Avatar video rendering failed" });
-              resolve("");
-            }
-            // else keep polling
-          } catch {
-            // network blip, keep polling
-          }
-        }, 10000);
-      });
+    // Check we have what we need
+    if (!imageUrls.length || !audioBase64) {
+      setStep("assemble", { status: "error", detail: "Missing assets - check errors above" });
+      setBuilding(false);
+      return;
     }
-
-    // Check if we have everything needed to assemble
-    if (!imageUrls.length || !audioBase64 || !heygenVideoUrl) {
-      setStep("assemble", { status: "error", detail: "Missing required assets - check errors above" });
+    if (!facelessMode && !heygenVideoUrl) {
+      setStep("assemble", { status: "error", detail: "Avatar video failed - try Faceless Mode" });
       setBuilding(false);
       return;
     }
 
-    // Assemble the reel
+    // Assemble
     setStep("assemble", { status: "loading", detail: "Submitting to Creatomate..." });
 
     try {
@@ -146,11 +144,11 @@ function ReelInner() {
         body: JSON.stringify({
           imageUrls,
           audioBase64,
-          heygenVideoUrl,
+          heygenVideoUrl: facelessMode ? "" : heygenVideoUrl,
           duration: 30,
         }),
       });
-      const assembleData = await assembleRes.json();
+      const assembleData = await assembleRes.json() as { renderId?: string; error?: string };
 
       if (!assembleData.renderId) {
         setStep("assemble", { status: "error", detail: assembleData.error || "Failed to start render" });
@@ -159,14 +157,13 @@ function ReelInner() {
       }
 
       const renderId = assembleData.renderId;
-      setStep("assemble", { status: "loading", detail: "Rendering video (1-5 min)..." });
+      setStep("assemble", { status: "loading", detail: "Rendering video... (1-5 min)" });
 
-      // Poll Creatomate render status
       await new Promise<void>((resolve) => {
         const interval = setInterval(async () => {
           try {
             const res = await fetch(`/api/reel/assemble?id=${renderId}`);
-            const data = await res.json();
+            const data = await res.json() as { status?: string; url?: string; errorMessage?: string };
             if (data.status === "succeeded" && data.url) {
               clearInterval(interval);
               setStep("assemble", { status: "done", detail: "Reel ready!" });
@@ -174,19 +171,14 @@ function ReelInner() {
               resolve();
             } else if (data.status === "failed") {
               clearInterval(interval);
-              const reason = data.errorMessage || "Render failed";
-              setStep("assemble", { status: "error", detail: `Creatomate: ${reason}` });
+              setStep("assemble", { status: "error", detail: data.errorMessage || "Render failed" });
               resolve();
             }
-            // planned/rendering - keep polling
-          } catch {
-            // keep polling on network blips
-          }
+          } catch { /* keep polling */ }
         }, 5000);
       });
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      setStep("assemble", { status: "error", detail: msg });
+      setStep("assemble", { status: "error", detail: e instanceof Error ? e.message : "Unknown error" });
     }
 
     setBuilding(false);
@@ -195,11 +187,8 @@ function ReelInner() {
   return (
     <div>
       <h1 className="text-3xl font-bold mb-2">⚡ Reel Builder</h1>
-      <p className="text-gray-400 mb-2">
-        Build a split-screen reel: AI comic images on top, your avatar below.
-      </p>
-      <p className="text-xs text-gray-600 mb-8">
-        Powered by DALL-E 3 + ElevenLabs + HeyGen + Creatomate. Takes 5-15 minutes total.
+      <p className="text-gray-400 mb-6">
+        Split-screen reel: AI images on top, your avatar below. Theaisurfer style.
       </p>
 
       <textarea
@@ -207,9 +196,23 @@ function ReelInner() {
         onChange={(e) => setScript(e.target.value)}
         placeholder="Paste your script here..."
         className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 mb-4 leading-relaxed"
-        rows={8}
+        rows={6}
         disabled={building}
       />
+
+      {/* Faceless mode toggle */}
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => setFacelessMode(!facelessMode)}
+          disabled={building}
+          className={`relative w-12 h-6 rounded-full transition-colors ${facelessMode ? "bg-orange-600" : "bg-gray-700"}`}
+        >
+          <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${facelessMode ? "left-7" : "left-1"}`} />
+        </button>
+        <span className="text-sm text-gray-400">
+          <span className="text-white font-medium">Faceless Mode</span> - skip avatar, faster render
+        </span>
+      </div>
 
       <button
         onClick={buildReel}
@@ -219,44 +222,33 @@ function ReelInner() {
         {building ? "Building Reel..." : "⚡ Build Reel"}
       </button>
 
-      {/* Step cards */}
+      {/* Steps */}
       {steps.some((s) => s.status !== "idle") && (
         <div className="space-y-3 mb-8">
           {steps.map((step) => (
-            <div
-              key={step.id}
-              className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center gap-4"
-            >
+            <div key={step.id} className={`bg-gray-900 border rounded-xl p-4 flex items-center gap-4 ${
+              step.status === "error" ? "border-red-800" :
+              step.status === "done" ? "border-green-800" :
+              step.status === "skipped" ? "border-gray-800 opacity-40" :
+              "border-gray-800"
+            }`}>
               <div className="text-2xl w-8 text-center flex-shrink-0">
-                {step.status === "idle" && (
-                  <span className="text-gray-600">{step.emoji}</span>
-                )}
-                {step.status === "loading" && (
-                  <span className="animate-pulse">{step.emoji}</span>
-                )}
+                {step.status === "idle" && <span className="text-gray-600">{step.emoji}</span>}
+                {step.status === "loading" && <span className="animate-pulse">{step.emoji}</span>}
                 {step.status === "done" && <span>✅</span>}
                 {step.status === "error" && <span>❌</span>}
+                {step.status === "skipped" && <span className="text-gray-600">{step.emoji}</span>}
               </div>
               <div className="flex-1 min-w-0">
-                <div
-                  className={`font-semibold ${
-                    step.status === "idle"
-                      ? "text-gray-600"
-                      : step.status === "loading"
-                      ? "text-white"
-                      : step.status === "done"
-                      ? "text-green-400"
-                      : "text-red-400"
-                  }`}
-                >
-                  {step.label}
+                <div className={`font-semibold ${
+                  step.status === "idle" || step.status === "skipped" ? "text-gray-600" :
+                  step.status === "loading" ? "text-white" :
+                  step.status === "done" ? "text-green-400" : "text-red-400"
+                }`}>
+                  {step.label}{step.status === "skipped" ? " (skipped)" : ""}
                 </div>
                 {step.detail && (
-                  <div
-                    className={`text-sm mt-0.5 ${
-                      step.status === "error" ? "text-red-400" : "text-gray-500"
-                    }`}
-                  >
+                  <div className={`text-sm mt-0.5 ${step.status === "error" ? "text-red-400" : "text-gray-500"}`}>
                     {step.detail}
                   </div>
                 )}
@@ -274,22 +266,28 @@ function ReelInner() {
       {/* Final output */}
       {finalUrl && (
         <div className="bg-gray-900 border border-green-700 rounded-xl p-5">
-          <div className="text-green-400 font-semibold text-lg mb-4">
-            ✅ Your Reel is Ready!
-          </div>
+          <div className="text-green-400 font-semibold text-lg mb-4">✅ Your Reel is Ready!</div>
           <video
             src={finalUrl}
             controls
             className="w-full max-w-sm mx-auto rounded-lg bg-black"
             style={{ maxHeight: "80vh" }}
           />
-          <div className="mt-4 text-center">
+          <div className="mt-4 flex gap-3 justify-center flex-wrap">
             <a
               href={finalUrl}
               download="reel.mp4"
-              className="inline-block bg-green-700 hover:bg-green-600 px-6 py-3 rounded-xl font-semibold transition-colors"
+              className="bg-green-700 hover:bg-green-600 px-6 py-3 rounded-xl font-semibold transition-colors"
             >
               Download Reel
+            </a>
+            <a
+              href={finalUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded-xl font-semibold transition-colors"
+            >
+              Open in New Tab
             </a>
           </div>
         </div>
