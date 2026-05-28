@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
+    "@aws-sdk/client-s3": "^3.1055.0",
+    "@aws-sdk/s3-request-presigner": "^3.1055.0",
     "@vercel/blob": "^2.4.0",
     "next": "16.2.6",
     "openai": "^6.37.0",
