@@ -29,7 +29,7 @@ function ScriptPageInner() {
   }
 
   function copyScript() {
-    navigator.clipboard.writeText(script);
+    navigator.clipboard?.writeText(script).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }

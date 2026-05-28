@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   function copy() {
-    navigator.clipboard.writeText(text);
+    navigator.clipboard?.writeText(text).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
